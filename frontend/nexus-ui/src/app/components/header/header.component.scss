@@ -1,0 +1,25 @@
+:host { display: block; }
+
+.chat-heading {
+  background: var(--surface);
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid rgba(15,30,60,0.06);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0; /* remove extra gap */
+  border-top-left-radius: calc(var(--radius) - 2px);
+  border-top-right-radius: calc(var(--radius) - 2px);
+}
+
+.chat-heading .title { font-weight: 700; font-size: 1rem; }
+.chat-heading .subtitle { font-size: 0.85rem; color: var(--muted); margin-left: 8px; }
+
+@media (max-width: 576px) { .chat-heading { padding: 0.4rem 0.5rem; } }
+
+.heading-right { margin-left: auto; display:flex; align-items:center; }
+.health { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:0.85rem }
+.health .dot { width:10px; height:10px; border-radius:999px; background:rgba(15,30,60,0.12); display:inline-block }
+.health .dot.ok { background:#10b981; }
+.health .dot.warn { background:#ef4444; }
+.health-text { color: #374151; font-weight:600 }

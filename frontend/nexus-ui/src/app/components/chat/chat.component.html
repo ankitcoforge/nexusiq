@@ -1,0 +1,292 @@
+<div id="chat-messages" class="chat-body p-3">
+  <div class="messages-list">
+    <ng-container *ngIf="messages.length; else empty">
+      <div
+        *ngFor="let m of messages"
+        class="d-flex mb-3"
+        [class.justify-content-end]="m.role === 'user'"
+        [class.justify-content-start]="m.role !== 'user'"
+      >
+        <!-- User / simple text bubble -->
+        <ng-container
+          *ngIf="!m.type || m.type === 'text' || m.type === 'error'"
+        >
+          <div
+            class="message p-2 px-3 rounded"
+            [class.user]="m.role === 'user'"
+            [class.bot]="m.role !== 'user'"
+            [innerHTML]="m.content"
+          ></div>
+        </ng-container>
+
+        <ng-container *ngIf="m.type === 'extraction' && m.data">
+          <div class="card extraction-card">
+            <div class="card-body">
+              <!-- Header -->
+              <div class="card-header">
+                <div class="title">📋 Extracted Invoice Data</div>
+                <div class="subtitle">
+                  Confidence indicators shown where available
+                </div>
+              </div>
+
+              <!-- Two column layout -->
+              <div class="grid-2">
+                <!-- LEFT -->
+                <div>
+                  <div class="section-label">Invoice</div>
+
+                  <div class="field">
+                    <strong>Number</strong>
+                    <span>{{ m.data.invoice_number?.value || "—" }}</span>
+                    <span
+                      *ngIf="m.data.invoice_number?.confidence < 0.8"
+                      class="review-badge"
+                    >
+                      Needs Review
+                    </span>
+                  </div>
+
+                  <div class="field">
+                    <strong>Date</strong>
+                    <span>{{ m.data.invoice_date?.value || "—" }}</span>
+                    <span
+                      *ngIf="m.data.invoice_date?.confidence < 0.8"
+                      class="review-badge"
+                    >
+                      Needs Review
+                    </span>
+                  </div>
+
+                  <div class="section-label">Vendor</div>
+
+                  <div class="field">
+                    <strong>Name</strong>
+                    <span>{{ m.data.vendor?.name?.value || "—" }}</span>
+                  </div>
+
+                  <div class="field">
+                    <strong>Address</strong>
+                    <span>{{ m.data.vendor?.address?.value || "—" }}</span>
+                  </div>
+
+                  <div class="field">
+                    <strong>Phone</strong>
+                    <span>{{ m.data.vendor?.phone?.value || "—" }}</span>
+                  </div>
+                </div>
+
+                <!-- RIGHT -->
+                <div>
+                  <div class="section-label">Customer</div>
+
+                  <div class="field">
+                    <strong>Name</strong>
+                    <span>{{ m.data.customer?.name?.value || "—" }}</span>
+                  </div>
+
+                  <div class="field">
+                    <strong>Phone</strong>
+                    <span>{{ m.data.customer?.phone?.value || "—" }}</span>
+                  </div>
+
+                  <div class="section-label">Vehicle</div>
+
+                  <div class="field">
+                    <strong>Year / Make / Model</strong>
+                    <span>
+                      {{
+                        (m.data.vehicle?.year?.value || "") +
+                          " " +
+                          (m.data.vehicle?.make?.value || "") +
+                          " " +
+                          (m.data.vehicle?.model?.value || "")
+                      }}
+                    </span>
+                  </div>
+
+                  <div class="field">
+                    <strong>VIN</strong>
+                    <span>{{ m.data.vehicle?.vin?.value || "—" }}</span>
+                  </div>
+
+                  <div class="field">
+                    <strong>Mileage</strong>
+                    <span>{{ m.data.vehicle?.mileage?.value || "—" }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Line Items -->
+              <div *ngIf="m.data.line_items?.length" class="line-items">
+                <div class="section-label">Line Items</div>
+
+                <div class="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Description</th>
+                        <th class="center">Qty</th>
+                        <th class="right">Price</th>
+                        <th class="right">Total</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      <tr *ngFor="let li of m.data.line_items">
+                        <td>{{ li.description }}</td>
+                        <td class="center">{{ li.quantity }}</td>
+                        <td class="right">
+                          {{ formatCurrency(li.unit_price) }}
+                        </td>
+                        <td class="right strong">
+                          {{ formatCurrency(li.total) }}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- Totals -->
+                <div class="totals">
+                  <div>
+                    Subtotal:
+                    <strong>{{ formatCurrency(m.data.subtotal) }}</strong>
+                  </div>
+
+                  <div>
+                    Tax ({{ m.data.tax_rate || 0 }}%):
+                    <strong>{{ formatCurrency(m.data.tax_amount) }}</strong>
+                  </div>
+
+                  <div class="grand-total">
+                    Total:
+                    <strong>{{ formatCurrency(m.data.total) }}</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </ng-container>
+        <!-- Step card -->
+        <ng-container *ngIf="m.type === 'step' && m.data">
+          <div class="card w-100 shadow-sm border-0">
+            <div class="card-body p-3">
+              <div class="d-flex align-items-center">
+                <div class="me-3">
+                  <div
+                    class="badge rounded-circle d-inline-flex align-items-center justify-content-center"
+                    [ngClass]="stepStatusClass(m.data.status)"
+                    style="width: 34px; height: 34px; font-weight: 600"
+                  >
+                    {{ m.data.step_number }}
+                  </div>
+                </div>
+                <div>
+                  <div class="fw-semibold">{{ m.data.step_name }}</div>
+                  <div class="text-muted small">{{ m.data.summary }}</div>
+                </div>
+                <div class="ms-auto text-muted small">
+                  {{ m.data.duration_seconds || 0 | number: "1.1-1" }}s
+                </div>
+              </div>
+
+              <div *ngIf="m.data.flags?.length" class="mt-2">
+                <div
+                  *ngFor="let f of m.data.flags"
+                  class="p-2 rounded mb-1"
+                  [class.border-danger]="f.severity === 'critical'"
+                  [class.text-danger]="f.severity === 'critical'"
+                  [class.border-warning]="f.severity === 'warning'"
+                  [class.text-warning]="f.severity === 'warning'"
+                  [class.border-info]="f.severity === 'info'"
+                  [class.text-info]="f.severity === 'info'"
+                  [class.bg-light]="
+                    f.severity === 'critical' ||
+                    f.severity === 'warning' ||
+                    f.severity === 'info'
+                  "
+                >
+                  <div class="small">
+                    <strong>⚑ [{{ f.severity.toUpperCase() }}]</strong>
+                    {{ f.message }}
+                  </div>
+                </div>
+              </div>
+
+              <div class="mt-2">
+                <button
+                  class="btn btn-sm btn-outline-secondary"
+                  (click)="
+                    toggleThought('thought-' + (m.data.step_number || ''))
+                  "
+                >
+                  💭 Show Thought Process
+                </button>
+                <div
+                  *ngIf="
+                    toggledThoughts['thought-' + (m.data.step_number || '')]
+                  "
+                  class="mt-2 bg-light rounded p-2 small font-monospace text-muted"
+                >
+                  {{ m.data.thought_process }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </ng-container>
+
+        <!-- Verdict / report -->
+        <ng-container *ngIf="m.type === 'verdict' && m.data">
+          <div class="card w-100 shadow-sm border-0">
+            <div
+              class="card-header text-white"
+              [class.bg-success]="m.data.verdict === 'Approve for Processing'"
+              [class.bg-warning]="m.data.verdict === 'Approve with Notation'"
+              [class.text-dark]="m.data.verdict === 'Approve with Notation'"
+              [class.bg-danger]="m.data.verdict === 'Reject'"
+            >
+              <div class="d-flex align-items-center">
+                <div class="fw-bold me-3">🏙️ {{ m.data.verdict }}</div>
+                <div class="small text-white-50">
+                  {{ m.data.verdict_reasoning }}
+                </div>
+              </div>
+            </div>
+            <div class="card-body p-3">
+              <div class="d-flex align-items-center mb-2">
+                <div class="me-4 small text-muted">
+                  Total Flags: <strong>{{ m.data.total_flags || 0 }}</strong>
+                </div>
+                <div class="me-4 small text-muted">
+                  Critical:
+                  <strong
+                    [class.text-danger]="(m.data.critical_flags || 0) > 0"
+                    >{{ m.data.critical_flags || 0 }}</strong
+                  >
+                </div>
+                <div class="ms-auto">
+                  <button
+                    class="btn btn-sm btn-primary me-2"
+                    (click)="downloadReport()"
+                  >
+                    📄 Download PDF Report
+                  </button>
+                </div>
+              </div>
+              <div *ngIf="m.data.recommendation" class="small text-muted">
+                💡 {{ m.data.recommendation }}
+              </div>
+            </div>
+          </div>
+        </ng-container>
+      </div>
+    </ng-container>
+
+    <ng-template #empty>
+      <div class="message bot p-3 bg-light rounded">
+        No messages yet. Upload a PDF or ask a question.
+      </div>
+    </ng-template>
+  </div>
+</div>

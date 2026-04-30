@@ -1,0 +1,56 @@
+<div
+  class="input-bar input-panel bg-white rounded shadow-sm p-2 d-flex align-items-center"
+>
+  <!-- Tools button -->
+  <div class="tool-btn me-2" (click)="toggleTools()" aria-hidden="true">
+    <i class="bi bi-sliders"></i>
+  </div>
+
+  <!-- Tools menu -->
+  <div class="tools-menu me-2" [class.open]="toolsOpen" *ngIf="toolsOpen">
+    <div class="tool-item">
+      <i class="bi bi-shield-check"></i> Fraud Detection (active)
+    </div>
+    <div class="tool-item">
+      <i class="bi bi-layout-text-window"></i> Claims Triaging (coming soon)
+    </div>
+    <div class="tool-item">
+      <i class="bi bi-briefcase"></i> Submission Center (coming soon)
+    </div>
+    <div class="tool-item">
+      <i class="bi bi-cpu"></i> Agentic AI Core Platform (coming soon)
+    </div>
+  </div>
+
+  <!-- Upload -->
+  <div class="upload-btn me-2">
+    <input type="file" id="fileUpload" (change)="onFileChange($event)" />
+    <label
+      for="fileUpload"
+      class="btn btn-light btn-sm"
+      aria-label="Upload PDF"
+    >
+      <i class="bi bi-cloud-upload" aria-hidden="true"></i>
+    </label>
+  </div>
+
+  <!-- Text Input -->
+  <input
+    id="userInput"
+    class="form-control msg-input flex-grow-1 me-2"
+    placeholder="Type your message..."
+    [(ngModel)]="message"
+    (keydown.enter)="triggerSend()"
+  />
+
+  <!-- Send button -->
+  <button class="send-btn btn btn-primary btn-sm" (click)="triggerSend()">
+    Send
+  </button>
+
+  <!-- Analyze button (shown after upload) -->
+  <button *ngIf="showAnalyze" class="analyze-btn" (click)="triggerAnalyze()">
+    <i class="fa fa-search"></i>
+    <span>Analyze</span>
+  </button>
+</div>

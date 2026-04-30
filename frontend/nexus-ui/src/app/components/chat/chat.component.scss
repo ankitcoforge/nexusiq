@@ -1,0 +1,24 @@
+.chat-container {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.chat-container { border-top-left-radius: 0.25rem; border-top-right-radius: 0.25rem; }
+
+.chat-container .no-messages {
+	margin: auto;
+	color: var(--muted);
+}
+
+.messages-list {
+	display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    height: 100%;
+    overflow: auto;
+}
+
+.message { line-height: 1.25; }
+
+:host { display: block; height: 100%; }
