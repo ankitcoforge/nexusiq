@@ -8,6 +8,8 @@ from ..models.schemas import (
     ArithmeticCheckResult, VendorCheckResult, PriceCheckResult, VINCheckResult
 )
 from ..services.coforge_llm import invoke_llm, ainvoke_llm
+from ..services.langchain_tools import asearch_ddg
+from ..services.langchain_agent import run_agent_async, get_recent_tool_calls
 from ..utils.guardrails import apply_guardrails
 
 logger = logging.getLogger(__name__)
@@ -125,22 +127,37 @@ async def verify_vendor(invoice: InvoiceData) -> VendorCheckResult:
         )
 
     thought += f"Vendor: {vendor_name}\nAddress: {vendor_address}\nPhone: {vendor_phone}\n\n"
-
     try:
-        prompt = f"""Analyze this vendor for potential fraud indicators in an insurance claim context:
-Vendor Name: {vendor_name}
-Address: {vendor_address}  
-Phone: {vendor_phone}
+        # Perform a quick DuckDuckGo search to surface public info for the vendor
+        try:
+            ddg = await asearch_ddg(vendor_name)
+            web_summary = []
+            if ddg.get("summary"):
+                web_summary.append(ddg.get("summary"))
+            web_context = "\n".join(web_summary)
+            if web_context:
+                thought += f"Web search (DuckDuckGo via LangChain) summary:\n{web_context}\n\n"
+        except Exception as e:
+            web_context = ""
+            thought += f"Web search failed: {e}\n\n"
 
-Consider:
-1. Does the name look like a real business?
-2. Are there red flags (generic names, PO Box only, no phone)?
-3. Does the address format seem legitimate?
+        prompt = f"""You are an automated verification agent. Use tools (web search) if helpful and answer in JSON.
+    Context:
+    Vendor Name: {vendor_name}
+    Address: {vendor_address}
+    Phone: {vendor_phone}
 
-Return JSON:
-{{"assessment": "likely_legitimate|suspicious|needs_verification", "confidence": 0.0, "reasoning": "", "red_flags": [], "recommendation": ""}}"""
+    Instructions:
+    1) Decide whether the vendor appears legitimate, suspicious, or needs verification.
+    2) If web searches are useful, call the `duckduckgo_search` tool and use its results.
+    3) Return strict JSON ONLY with fields: `assessment` (likely_legitimate|suspicious|needs_verification), `confidence` (0.0-1.0), `reasoning` (string), `red_flags` (list), `recommendation` (string).
 
-        response = await ainvoke_llm(prompt)
+    Example:
+    {{"assessment":"likely_legitimate","confidence":0.9,"reasoning":"...","red_flags":[],"recommendation":""}}
+    """
+
+        # run via LangChain agent (it can call the search tool dynamically)
+        response = await run_agent_async(prompt)
         cleaned = re.sub(r"```(?:json)?", "", response).strip()
         import json
         result = json.loads(cleaned)
@@ -165,6 +182,19 @@ Return JSON:
         else:
             status = CheckStatus.PASSED
             summary = f"✓ Vendor appears legitimate: {vendor_name}"
+
+        # Append any tool calls the agent made to the thought process for transparency
+        try:
+            tool_calls = get_recent_tool_calls()
+            if tool_calls:
+                thought += "\nAgent tool calls made during verification:\n"
+                for tc in tool_calls:
+                    tname = tc.get("tool")
+                    q = tc.get("query")
+                    s = tc.get("summary", "")
+                    thought += f" - {tname}: query='{q}' summary='{(s[:300] + "...") if len(s) > 300 else s}'\n"
+        except Exception as e:
+            thought += f"\nUnable to fetch agent tool call logs: {e}\n"
 
     except Exception as e:
         logger.warning(f"Vendor verification failed: {e}")

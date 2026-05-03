@@ -23,6 +23,10 @@ async def create_session():
         "message": "Upload an invoice PDF for fraud analysis",
         "chat_history": [m.model_dump() for m in session.chat_history]
     }
+    
+@router.get("/health")
+async def api_health():
+    return {"status": "ok", "service": "NexusIQ Fraud Detection"}
 
 @router.post("/upload/{session_id}")
 async def upload_document(session_id: str, file: UploadFile = File(...)):
