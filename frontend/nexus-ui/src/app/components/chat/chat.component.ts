@@ -13,6 +13,14 @@ export class ChatComponent implements OnInit {
     type?: string;
     data?: any;
   }> = [];
+  getVerdictClass(verdict: string): string {
+    const map: Record<string, string> = {
+      'Approve for Processing': 'approve',
+      'Approve with Notation': 'warning',
+      'Escalate to SIU': 'reject',
+    };
+    return map[verdict] || 'default';
+  }
 
   @Input() sessionId: string | null = null;
 

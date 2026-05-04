@@ -16,6 +16,34 @@
 .chat-heading .subtitle { font-size: 0.85rem; color: var(--muted); }
 
 @media (max-width: 576px) { .chat-heading { padding: 0.4rem 0.5rem; } }
+.ai-icon i {
+  font-size: 28px;
+
+  /* Gradient */
+  background: linear-gradient(135deg, #059669, #22c55e, #16a34a);
+
+  /* Gradient animation setup */
+  background-size: 200% 200%;
+  animation: gradientMove 3s ease infinite;
+
+  /* Apply gradient to icon */
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+
+  /* Make it feel bold */
+  text-shadow: 
+    0 0 1px rgba(0,0,0,0.2),
+    0 0 2px rgba(0,0,0,0.1);
+
+  /* Optional glow */
+  // filter: drop-shadow(0 2px 4px rgba(34, 197, 94, 0.4));
+}
+
+/* Animation */
+@keyframes gradientMove {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
+}
 
 .heading-right { margin-left: auto; display:flex; align-items:center; }
 .health { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:0.85rem }

@@ -237,7 +237,10 @@
         <ng-container *ngIf="m.type === 'verdict' && m.data">
           <div class="card verdict-card">
             <!-- HEADER -->
-            <div class="verdict-header">
+            <div
+              class="verdict-header"
+              [ngClass]="getVerdictClass(m.data.verdict)"
+            >
               <div class="verdict-title">🏙️ {{ m.data.verdict }}</div>
 
               <div class="verdict-reason">
