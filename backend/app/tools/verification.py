@@ -111,6 +111,7 @@ async def verify_vendor(invoice: InvoiceData) -> VendorCheckResult:
     start = time.time()
     flags = []
     thought = "=== Step 3: Vendor Legitimacy Verification ===\n\n"
+
     vendor_name = invoice.vendor.name.value
     vendor_address = invoice.vendor.address.value
     vendor_phone = invoice.vendor.phone.value
@@ -119,97 +120,123 @@ async def verify_vendor(invoice: InvoiceData) -> VendorCheckResult:
         thought += "No vendor name extracted — cannot verify.\n"
         thought = apply_guardrails(thought)
         return VendorCheckResult(
-            step_number=3, step_name="Vendor Legitimacy",
+            step_number=3,
+            step_name="Vendor Legitimacy",
             status=CheckStatus.MANUAL_REVIEW,
             summary="No vendor name — manual review required",
-            thought_process=thought, flags=flags,
+            thought_process=thought,
+            flags=flags,
             duration_seconds=round(time.time() - start, 2)
         )
 
     thought += f"Vendor: {vendor_name}\nAddress: {vendor_address}\nPhone: {vendor_phone}\n\n"
+
     try:
-        # Perform a quick DuckDuckGo search to surface public info for the vendor
+        # ✅ IMPROVED SEARCH
         try:
-            ddg = await asearch_ddg(vendor_name)
-            web_summary = []
-            if ddg.get("summary"):
-                web_summary.append(ddg.get("summary"))
-            web_context = "\n".join(web_summary)
+            ddg = await asearch_ddg(
+                f"{vendor_name} reviews complaints business legitimacy"
+            )
+            web_context = ddg.get("summary", "")
+
             if web_context:
-                thought += f"Web search (DuckDuckGo via LangChain) summary:\n{web_context}\n\n"
+                thought += f"Web search summary:\n{web_context}\n\n"
         except Exception as e:
-            web_context = ""
             thought += f"Web search failed: {e}\n\n"
 
-        prompt = f"""You are an automated verification agent. Use tools (web search) if helpful and answer in JSON.
-    Context:
-    Vendor Name: {vendor_name}
-    Address: {vendor_address}
-    Phone: {vendor_phone}
+        prompt = ChatPromptTemplate.from_messages([
+    ("system", """You are a fraud detection assistant.
 
-    Instructions:
-    1) Decide whether the vendor appears legitimate, suspicious, or needs verification.
-    2) If web searches are useful, call the `duckduckgo_search` tool and use its results.
-    3) Return strict JSON ONLY with fields: `assessment` (likely_legitimate|suspicious|needs_verification), `confidence` (0.0-1.0), `reasoning` (string), `red_flags` (list), `recommendation` (string).
+You must:
+- Use tools when required
+- Return ONLY valid JSON
 
-    Example:
-    {{"assessment":"likely_legitimate","confidence":0.9,"reasoning":"...","red_flags":[],"recommendation":""}}
-    """
+Available tools:
+{tools}
 
-        # run via LangChain agent (it can call the search tool dynamically)
+Tool names:
+{tool_names}
+
+Output format:
+{{
+ "assessment": "likely_legitimate|suspicious|needs_verification",
+ "confidence": 0.0,
+ "reasoning": "",
+ "red_flags": [],
+ "recommendation": ""
+}}
+"""),
+    ("human", "{input}"),
+    MessagesPlaceholder(variable_name="agent_scratchpad")
+])
+
+        # ✅ IMPORTANT: agent already returns dict
         response = await run_agent_async(prompt)
-        cleaned = re.sub(r"```(?:json)?", "", response).strip()
-        import json
-        result = json.loads(cleaned)
-        thought += f"LLM Assessment: {result.get('assessment', 'unknown')}\n"
-        thought += f"Reasoning: {result.get('reasoning', '')}\n"
-        if result.get('red_flags'):
+
+        # ✅ SAFE HANDLING
+        if isinstance(response, dict):
+            result = response
+        else:
+            logger.warning(f"Invalid agent response: {response}")
+            result = {
+                "assessment": "needs_verification",
+                "confidence": 0.3,
+                "reasoning": "Invalid agent response",
+                "red_flags": ["Agent failure"],
+                "recommendation": "Manual review"
+            }
+
+        thought += f"LLM Assessment: {result.get('assessment')}\n"
+        thought += f"Reasoning: {result.get('reasoning')}\n"
+
+        if result.get("red_flags"):
             thought += f"Red flags: {', '.join(result['red_flags'])}\n"
 
         assessment = result.get("assessment", "needs_verification")
+
         if assessment == "suspicious":
             flags.append(FraudFlag(
                 check_name="Vendor Legitimacy",
                 severity=FraudFlagSeverity.CRITICAL,
-                message=f"Vendor assessed as suspicious: {vendor_name}",
+                message=f"Vendor suspicious: {vendor_name}",
                 details=result.get("reasoning", "")
             ))
             status = CheckStatus.FAILED
             summary = f"⚠️ SUSPICIOUS VENDOR: {vendor_name}"
+
         elif assessment == "needs_verification":
             status = CheckStatus.MANUAL_REVIEW
-            summary = f"Vendor not verified — manual review required: {vendor_name}"
+            summary = f"Vendor needs verification"
+
         else:
             status = CheckStatus.PASSED
             summary = f"✓ Vendor appears legitimate: {vendor_name}"
 
-        # Append any tool calls the agent made to the thought process for transparency
+        # ✅ TOOL LOGS (safe)
         try:
-            tool_calls = get_recent_tool_calls()
-            if tool_calls:
-                thought += "\nAgent tool calls made during verification:\n"
-                for tc in tool_calls:
-                    tname = tc.get("tool")
-                    q = tc.get("query")
-                    s = tc.get("summary", "")
-                    thought += f" - {tname}: query='{q}' summary='{(s[:300] + "...") if len(s) > 300 else s}'\n"
-        except Exception as e:
-            thought += f"\nUnable to fetch agent tool call logs: {e}\n"
+            for tc in get_recent_tool_calls():
+                thought += f"- {tc['tool']} → {tc['query']}\n"
+        except Exception:
+            pass
 
     except Exception as e:
         logger.warning(f"Vendor verification failed: {e}")
         thought += f"Verification unavailable: {e}\n"
         status = CheckStatus.MANUAL_REVIEW
-        summary = "Vendor verification unavailable — manual review recommended"
+        summary = "Vendor verification unavailable"
 
     thought = apply_guardrails(thought)
+
     return VendorCheckResult(
-        step_number=3, step_name="Vendor Legitimacy",
-        status=status, summary=summary, thought_process=thought,
-        flags=flags, duration_seconds=round(time.time() - start, 2),
+        step_number=3,
+        step_name="Vendor Legitimacy",
+        status=status,
+        summary=summary,
+        thought_process=thought,
+        flags=flags,
+        duration_seconds=round(time.time() - start, 2),
         vendor_found=(status == CheckStatus.PASSED)
     )
-
 async def verify_prices(invoice: InvoiceData) -> PriceCheckResult:
     start = time.time()
     flags = []
@@ -219,40 +246,76 @@ async def verify_prices(invoice: InvoiceData) -> PriceCheckResult:
         thought += "No line items to check.\n"
         thought = apply_guardrails(thought)
         return PriceCheckResult(
-            step_number=4, step_name="Market Price Benchmarking",
+            step_number=4,
+            step_name="Market Price Benchmarking",
             status=CheckStatus.UNAVAILABLE,
             summary="No line items to analyze",
-            thought_process=thought, flags=flags,
+            thought_process=thought,
+            flags=flags,
             duration_seconds=round(time.time() - start, 2)
         )
 
-    items_text = "\n".join([f"- {item.description}: ${item.unit_price:.2f} x {item.quantity}" for item in invoice.line_items[:10]])
+    items_text = "\n".join([
+        f"- {item.description}: ${item.unit_price:.2f} x {item.quantity}"
+        for item in invoice.line_items[:10]
+    ])
+
     thought += f"Checking {len(invoice.line_items)} line items against market rates:\n{items_text}\n\n"
 
     price_comparisons = []
+
     try:
-        prompt = f"""You are an auto repair pricing expert. Analyze these invoice line items for price fraud.
-For each item, estimate if the price is within normal market range.
+        prompt = f"""
+You are an auto repair pricing expert.
+
+Return ONLY valid JSON (no explanation, no markdown).
+
+Format:
+[
+  {{
+    "item": "string",
+    "listed_price": 0.0,
+    "market_low": 0.0,
+    "market_high": 0.0,
+    "assessment": "normal|overpriced|underpriced",
+    "deviation_pct": 0.0
+  }}
+]
 
 Line items:
 {items_text}
 
 Vehicle: {invoice.vehicle.make.value} {invoice.vehicle.model.value} {invoice.vehicle.year.value}
-
-Return JSON array:
-[{{"item": "", "listed_price": 0.0, "market_low": 0.0, "market_high": 0.0, "assessment": "normal|overpriced|underpriced", "deviation_pct": 0.0, "flag": false}}]"""
+"""
 
         response = await ainvoke_llm(prompt)
+
         import json, re as re2
-        cleaned = re2.sub(r"```(?:json)?", "", response).strip()
-        price_comparisons = json.loads(cleaned)
-        
+        cleaned = re2.sub(r"```(?:json)?", "", (response or "")).strip()
+
+        # ✅ SAFE JSON PARSE
+        try:
+            parsed = json.loads(cleaned)
+
+            if isinstance(parsed, list):
+                price_comparisons = parsed
+            else:
+                raise ValueError("Invalid structure (not list)")
+
+        except Exception:
+            logger.warning(f"Invalid price JSON: {cleaned[:200]}")
+            price_comparisons = []
+
+        # ✅ PROCESS RESULTS
         for comp in price_comparisons:
             deviation = abs(comp.get("deviation_pct", 0))
+
             thought += f"  • {comp.get('item', '')}: ${comp.get('listed_price', 0):.2f} "
             thought += f"(market: ${comp.get('market_low', 0):.2f}-${comp.get('market_high', 0):.2f})"
+
             if comp.get("assessment") == "overpriced" and deviation > PRICE_THRESHOLD:
                 thought += f" ⚠️ OVERPRICED by {deviation:.0f}%\n"
+
                 flags.append(FraudFlag(
                     check_name="Price Inflation",
                     severity=FraudFlagSeverity.WARNING if deviation < 100 else FraudFlagSeverity.CRITICAL,
@@ -262,9 +325,18 @@ Return JSON array:
             else:
                 thought += " ✓\n"
 
-        status = CheckStatus.FAILED if any(f.severity == FraudFlagSeverity.CRITICAL for f in flags) else \
-                  CheckStatus.WARNING if flags else CheckStatus.PASSED
-        summary = f"⚠️ {len(flags)} pricing flag(s) found" if flags else "✓ Prices within market range"
+        # ✅ FINAL STATUS
+        if not price_comparisons:
+            status = CheckStatus.UNAVAILABLE
+            summary = "Price benchmarking unavailable (invalid LLM output)"
+        else:
+            status = (
+                CheckStatus.FAILED if any(f.severity == FraudFlagSeverity.CRITICAL for f in flags)
+                else CheckStatus.WARNING if flags
+                else CheckStatus.PASSED
+            )
+
+            summary = f"{len(flags)} pricing flag(s) found" if flags else "✓ Prices within market range"
 
     except Exception as e:
         logger.warning(f"Price check failed: {e}")
@@ -273,10 +345,15 @@ Return JSON array:
         summary = "Price benchmarking unavailable"
 
     thought = apply_guardrails(thought)
+
     return PriceCheckResult(
-        step_number=4, step_name="Market Price Benchmarking",
-        status=status, summary=summary, thought_process=thought,
-        flags=flags, duration_seconds=round(time.time() - start, 2),
+        step_number=4,
+        step_name="Market Price Benchmarking",
+        status=status,
+        summary=summary,
+        thought_process=thought,
+        flags=flags,
+        duration_seconds=round(time.time() - start, 2),
         price_comparisons=price_comparisons if isinstance(price_comparisons, list) else []
     )
 
