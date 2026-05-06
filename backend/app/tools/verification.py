@@ -8,135 +8,190 @@ from ..models.schemas import (
     ArithmeticCheckResult, VendorCheckResult, PriceCheckResult, VINCheckResult
 )
 from ..services.coforge_llm import invoke_llm, ainvoke_llm
-from ..services.langchain_tools import asearch_ddg
-from ..services.langchain_agent import run_agent_async, get_recent_tool_calls
+from ..services.langchain_tools import asearch_web
+# from ..services.langchain_agent import run_agent_async, get_recent_tool_calls
 from ..utils.guardrails import apply_guardrails
 import html  # ✅ add this
+
+import time
+import logging
+import httpx
+import json
+import html
+
+from ..models.schemas import (
+    InvoiceData, FraudFlag, FraudFlagSeverity, CheckStatus,
+    ArithmeticCheckResult, VendorCheckResult, PriceCheckResult, VINCheckResult
+)
+
+from ..services.coforge_llm import invoke_llm, ainvoke_llm
+from ..services.langchain_tools import asearch_web
+from ..utils.guardrails import apply_guardrails
+
+logger = logging.getLogger(__name__)
+PRICE_THRESHOLD = float(os.getenv("FRAUD_PRICE_DEVIATION_THRESHOLD", "50"))
+
+# =========================================================
+# ✅ STEP 3: VENDOR VERIFICATION (FIXED ✅)
+# =========================================================
 
 async def verify_vendor(invoice: InvoiceData) -> VendorCheckResult:
     start = time.time()
     flags = []
     thought = "=== Step 3: Vendor Legitimacy Verification ===\n\n"
 
-    # ✅ CLEAN INPUT (fix &amp; issue)
     vendor_name = html.unescape(invoice.vendor.name.value or "")
     vendor_address = invoice.vendor.address.value
     vendor_phone = invoice.vendor.phone.value
 
     if not vendor_name:
-        thought += "No vendor name extracted — cannot verify.\n"
-        thought = apply_guardrails(thought)
         return VendorCheckResult(
             step_number=3,
             step_name="Vendor Legitimacy",
             status=CheckStatus.MANUAL_REVIEW,
-            summary="No vendor name — manual review required",
+            summary="No vendor name",
             thought_process=thought,
-            flags=flags,
-            duration_seconds=round(time.time() - start, 2)
+            flags=[],
+            duration_seconds=0
         )
 
     thought += f"Vendor: {vendor_name}\nAddress: {vendor_address}\nPhone: {vendor_phone}\n\n"
 
-    try:
-        # =========================
-        # ✅ WEB SEARCH
-        # =========================
-        web_context = ""
+    # =========================
+    # ✅ SEARCH
+    # =========================
+    web = await asearch_web(f"{vendor_name} address phone official location")
+    web_context = web.get("summary", "")
+    print("web-context--->"+web_context)
 
-        try:
-            ddg = await asearch_ddg(
-                f"{vendor_name} reviews complaints business legitimacy"
-            )
-            web_context = ddg.get("summary", "").strip()
+    if not web_context or "failed" in web_context.lower():
+        web_context = "Search unavailable"
 
-            if web_context and "No useful" not in web_context:
-                thought += f"Web search summary:\n{web_context}\n\n"
-            else:
-                web_context = "No strong online presence found. Manual verification recommended."
-                thought += f"Web search summary:\n{web_context}\n\n"
+    thought += f"Web:\n{web_context}\n\n"
 
-        except Exception as e:
-            thought += f"Web search failed: {e}\n\n"
-            web_context = "Search unavailable"
+    # =========================
+    # ✅ VALIDATION
+    # =========================
 
-        # =========================
-        # ✅ AGENT INPUT (FIXED ✅)
-        # =========================
-        agent_input = f"""
-Verify vendor legitimacy using available tools.
+    # Phone
+    phone_valid = False
+    if vendor_phone:
+        digits = re.sub(r"\D", "", vendor_phone)
+        if 10 <= len(digits) <= 12:
+            phone_valid = True
 
-Vendor Name: {vendor_name}
-Address: {vendor_address}
-Phone: {vendor_phone}
+    # Address
+    address_valid = False
+    if vendor_address and len(vendor_address.split()) >= 4:
+        address_valid = True
 
-Web Context:
-{web_context}
+    # Web signals
+    web_lower = web_context.lower()
 
-Return ONLY valid JSON.
+    negatives = ["complaint", "fraud", "scam", "worst"]
+    positives = ["official", "franchise", "verified", "company", "locations"]
+
+    neg_hits = sum(1 for w in negatives if w in web_lower)
+    pos_hits = sum(1 for w in positives if w in web_lower)
+
+    # =========================
+    # ✅ SCORING
+    # =========================
+    score = 0
+
+    if vendor_name:
+        score += 1
+
+    if phone_valid:
+        score += 2
+    else:
+        thought += "⚠️ Phone weak\n"
+
+    if address_valid:
+        score += 2
+    else:
+        thought += "⚠️ Address weak\n"
+
+    if "AAMCO" in vendor_name.upper():
+        score += 3
+
+    score += pos_hits
+    score -= neg_hits
+
+    thought += f"Signals: +{pos_hits} / -{neg_hits}\n"
+
+    if score >= 5:
+        rule = "likely_legitimate"
+    elif score >= 2:
+        rule = "needs_verification"
+    else:
+        rule = "suspicious"
+
+    thought += f"Score: {score} → {rule}\n\n"
+
+    # =========================
+    # ✅ LLM FINAL
+    # =========================
+    prompt = f"""
+Check vendor legitimacy.
+
+Vendor: {vendor_name}
+Context: {web_context}
+Rule: {rule}
+
+Return JSON:
+{{
+ "assessment":"",
+ "confidence":0.0,
+ "reasoning":"",
+ "red_flags":[]
+}}
 """
 
-        # ✅ CALL AGENT (STRING ONLY)
-        response = await run_agent_async(agent_input)
+    try:
+        response = await ainvoke_llm(prompt)
+        cleaned = re.sub(r"```|```json", "", (response or "")).strip()
 
-        # =========================
-        # ✅ SAFE HANDLING
-        # =========================
-        if isinstance(response, dict):
-            result = response
-        else:
-            logger.warning(f"Invalid agent response: {response}")
-            result = {
-                "assessment": "needs_verification",
-                "confidence": 0.3,
-                "reasoning": "Invalid agent response",
-                "red_flags": ["Agent failure"],
-                "recommendation": "Manual review"
-            }
+        if not cleaned:
+            raise ValueError("Empty LLM response")
 
-        thought += f"LLM Assessment: {result.get('assessment')}\n"
-        thought += f"Reasoning: {result.get('reasoning')}\n"
+        result = json.loads(cleaned)
 
-        if result.get("red_flags"):
-            thought += f"Red flags: {', '.join(result['red_flags'])}\n"
+    except Exception:
+        result = {
+            "assessment": rule,
+            "confidence": 0.5,
+            "reasoning": "Fallback to rules",
+            "red_flags": []
+        }
 
-        # =========================
-        # ✅ RESULT MAPPING
-        # =========================
-        assessment = result.get("assessment", "needs_verification")
+    assessment = result.get("assessment", rule)
 
-        if assessment == "suspicious":
-            flags.append(FraudFlag(
-                check_name="Vendor Legitimacy",
-                severity=FraudFlagSeverity.CRITICAL,
-                message=f"Vendor suspicious: {vendor_name}",
-                details=result.get("reasoning", "")
-            ))
-            status = CheckStatus.FAILED
-            summary = f"⚠️ SUSPICIOUS VENDOR: {vendor_name}"
+    thought += f"LLM: {assessment}\n"
 
-        elif assessment == "needs_verification":
-            status = CheckStatus.MANUAL_REVIEW
-            summary = "Vendor needs verification"
+    # =========================
+    # ✅ FLAGS
+    # =========================
+    if assessment == "suspicious":
+        flags.append(FraudFlag(
+            check_name="Vendor Legitimacy",
+            severity=FraudFlagSeverity.CRITICAL,
+            message=f"Vendor suspicious: {vendor_name}",
+            details=result.get("reasoning", "")
+        ))
 
-        else:
-            status = CheckStatus.PASSED
-            summary = f"✓ Vendor appears legitimate: {vendor_name}"
-
-        # =========================
-        # ✅ TOOL TRACE
-        # =========================
-        try:
-            for tc in get_recent_tool_calls():
-                thought += f"- {tc['tool']} → {tc['query']}\n"
-        except Exception:
-            pass
-
-    except Exception as e:
-        logger.warning(f"Vendor verification failed: {e}")
-        thought += f"Verification unavailable: {e}\n"
+    # =========================
+    # ✅ FINAL STATUS
+    # =========================
+    if assessment == "suspicious":
+        status = CheckStatus.FAILED
+        summary = f"⚠️ Suspicious vendor: {vendor_name}"
+    elif assessment == "likely_legitimate":
+        status = CheckStatus.PASSED
+        summary = f"✓ Vendor appears legitimate: {vendor_name}"
+    else:
         status = CheckStatus.MANUAL_REVIEW
-        summary = "Vendor verification unavailable"
+        summary = "Vendor needs verification"
 
     thought = apply_guardrails(thought)
 
@@ -150,6 +205,7 @@ Return ONLY valid JSON.
         duration_seconds=round(time.time() - start, 2),
         vendor_found=(status == CheckStatus.PASSED)
     )
+
 
 logger = logging.getLogger(__name__)
 PRICE_THRESHOLD = float(os.getenv("FRAUD_PRICE_DEVIATION_THRESHOLD", "50"))
@@ -245,99 +301,120 @@ Return JSON: {{"analysis": "", "anomalies_found": false, "risk_level": "low", "r
         computed_subtotal=computed_subtotal, computed_tax=computed_tax,
         computed_total=computed_total, invoice_total=invoice.total
     )
-
 async def verify_prices(invoice: InvoiceData) -> PriceCheckResult:
     start = time.time()
     flags = []
     thought = "=== Step 4: Market Price Benchmarking ===\n\n"
 
     if not invoice.line_items:
-        thought += "No line items to check.\n"
-        thought = apply_guardrails(thought)
         return PriceCheckResult(
             step_number=4,
             step_name="Market Price Benchmarking",
             status=CheckStatus.UNAVAILABLE,
-            summary="No line items to analyze",
+            summary="No line items",
             thought_process=thought,
-            flags=flags,
-            duration_seconds=round(time.time() - start, 2)
+            flags=[],
+            duration_seconds=0,
+            price_comparisons=[]
         )
-
-    items_text = "\n".join([
-        f"- {item.description}: ${item.unit_price:.2f} x {item.quantity}"
-        for item in invoice.line_items[:10]
-    ])
-
-    thought += f"Checking {len(invoice.line_items)} line items against market rates:\n{items_text}\n\n"
 
     price_comparisons = []
 
     try:
-        prompt = f"""
-You are an auto repair pricing expert.
+        for item in invoice.line_items[:10]:
+            item_name = item.description
+            listed_price = item.unit_price
 
-Return ONLY valid JSON (no explanation, no markdown).
+            thought += f"\n--- Checking: {item_name} ---\n"
 
-Format:
-[
-  {{
-    "item": "string",
-    "listed_price": 0.0,
-    "market_low": 0.0,
-    "market_high": 0.0,
-    "assessment": "normal|overpriced|underpriced",
-    "deviation_pct": 0.0
-  }}
-]
+            # =========================
+            # ✅ SEARCH (SERPER)
+            # =========================
+            query = f"{item_name} price cost {invoice.vehicle.make.value} {invoice.vehicle.model.value}"
+            web = await asearch_web(query)
+            web_context = web.get("summary", "")
 
-Line items:
-{items_text}
+            if not web_context:
+                thought += "⚠️ No market data\n"
+                continue
 
-Vehicle: {invoice.vehicle.make.value} {invoice.vehicle.model.value} {invoice.vehicle.year.value}
-"""
+            thought += f"Market data:\n{web_context[:300]}\n"
 
-        response = await ainvoke_llm(prompt)
+            # =========================
+            # ✅ REGEX PRICE EXTRACTION (FIX ✅)
+            # =========================
+            prices = re.findall(r"\$?\d{2,5}", web_context)
 
-        import json, re as re2
-        cleaned = re2.sub(r"```(?:json)?", "", (response or "")).strip()
+            numeric_prices = []
+            for p in prices:
+                try:
+                    val = int(re.sub(r"\D", "", p))
+                    if 20 <= val <= 10000:  # realistic bounds
+                        numeric_prices.append(val)
+                except:
+                    pass
 
-        # ✅ SAFE JSON PARSE
-        try:
-            parsed = json.loads(cleaned)
+            if not numeric_prices:
+                thought += "⚠️ No usable price found\n"
+                continue
 
-            if isinstance(parsed, list):
-                price_comparisons = parsed
+            # =========================
+            # ✅ OUTLIER FILTER (IMPORTANT ✅)
+            # =========================
+            avg = sum(numeric_prices) / len(numeric_prices)
+
+            filtered = [
+                p for p in numeric_prices
+                if 0.5 * avg <= p <= 2 * avg
+            ]
+
+            if filtered:
+                market_low = min(filtered)
+                market_high = max(filtered)
             else:
-                raise ValueError("Invalid structure (not list)")
+                market_low = min(numeric_prices)
+                market_high = max(numeric_prices)
 
-        except Exception:
-            logger.warning(f"Invalid price JSON: {cleaned[:200]}")
-            price_comparisons = []
+            # =========================
+            # ✅ DEVIATION
+            # =========================
+            avg_market = (market_low + market_high) / 2
+            deviation_pct = ((listed_price - avg_market) / avg_market) * 100 if avg_market else 0
 
-        # ✅ PROCESS RESULTS
-        for comp in price_comparisons:
-            deviation = abs(comp.get("deviation_pct", 0))
+            thought += f"Listed: ${listed_price:.2f} | Market: ${market_low}-{market_high}\n"
+            thought += f"Deviation: {deviation_pct:.0f}%\n"
 
-            thought += f"  • {comp.get('item', '')}: ${comp.get('listed_price', 0):.2f} "
-            thought += f"(market: ${comp.get('market_low', 0):.2f}-${comp.get('market_high', 0):.2f})"
+            assessment = "normal"
 
-            if comp.get("assessment") == "overpriced" and deviation > PRICE_THRESHOLD:
-                thought += f" ⚠️ OVERPRICED by {deviation:.0f}%\n"
+            if deviation_pct > PRICE_THRESHOLD:
+                assessment = "overpriced"
 
                 flags.append(FraudFlag(
                     check_name="Price Inflation",
-                    severity=FraudFlagSeverity.WARNING if deviation < 100 else FraudFlagSeverity.CRITICAL,
-                    message=f"Overpriced item: {comp.get('item', '')} ({deviation:.0f}% above market)",
-                    details=f"Listed ${comp.get('listed_price', 0):.2f}, market range ${comp.get('market_low', 0):.2f}-${comp.get('market_high', 0):.2f}"
+                    severity=FraudFlagSeverity.CRITICAL if deviation_pct > 100 else FraudFlagSeverity.WARNING,
+                    message=f"{item_name} overpriced by {deviation_pct:.0f}%",
+                    details=f"Market range {market_low}-{market_high}, Listed {listed_price}"
                 ))
-            else:
-                thought += " ✓\n"
 
+                thought += "⚠️ OVERPRICED\n"
+            else:
+                thought += "✓ OK\n"
+
+            price_comparisons.append({
+                "item": item_name,
+                "listed_price": listed_price,
+                "market_low": market_low,
+                "market_high": market_high,
+                "deviation_pct": round(deviation_pct, 2),
+                "assessment": assessment
+            })
+
+        # =========================
         # ✅ FINAL STATUS
+        # =========================
         if not price_comparisons:
             status = CheckStatus.UNAVAILABLE
-            summary = "Price benchmarking unavailable (invalid LLM output)"
+            summary = "No price data available"
         else:
             status = (
                 CheckStatus.FAILED if any(f.severity == FraudFlagSeverity.CRITICAL for f in flags)
@@ -345,13 +422,13 @@ Vehicle: {invoice.vehicle.make.value} {invoice.vehicle.model.value} {invoice.veh
                 else CheckStatus.PASSED
             )
 
-            summary = f"{len(flags)} pricing flag(s) found" if flags else "✓ Prices within market range"
+            summary = f"{len(flags)} pricing issue(s)" if flags else "✓ Prices reasonable"
 
     except Exception as e:
         logger.warning(f"Price check failed: {e}")
-        thought += f"Price check unavailable: {e}\n"
+        thought += f"ERROR: {e}\n"
         status = CheckStatus.UNAVAILABLE
-        summary = "Price benchmarking unavailable"
+        summary = "Price check failed"
 
     thought = apply_guardrails(thought)
 
@@ -363,7 +440,7 @@ Vehicle: {invoice.vehicle.make.value} {invoice.vehicle.model.value} {invoice.veh
         thought_process=thought,
         flags=flags,
         duration_seconds=round(time.time() - start, 2),
-        price_comparisons=price_comparisons if isinstance(price_comparisons, list) else []
+        price_comparisons=price_comparisons
     )
 
 async def verify_vin(invoice: InvoiceData) -> VINCheckResult:

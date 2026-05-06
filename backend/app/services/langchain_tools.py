@@ -4,7 +4,7 @@ from cachetools import TTLCache
 import threading
 import httpx
 import logging
-from duckduckgo_search import DDGS
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # CACHE + OBSERVABILITY
 # =========================
 
-_ddg_cache = TTLCache(maxsize=512, ttl=3600)
+_cache = TTLCache(maxsize=512, ttl=3600)
 _cache_lock = threading.Lock()
 
 _tool_calls: List[Dict[str, Any]] = []
@@ -38,68 +38,76 @@ def clear_tool_calls():
 
 
 # =========================
-# DUCKDUCKGO SEARCH
+# ✅ SERPER SEARCH (REPLACES DDG)
 # =========================
 
-def _fetch_ddg(query: str, max_results: int = 5) -> str:
-    try:
-        with DDGS(headers={"User-Agent": "Mozilla/5.0"}) as ddgs:
-            hits = list(ddgs.text(query, max_results=max_results))
+SERPER_URL = "https://google.serper.dev/search"
+SERPER_API_KEY = "bbdcc94207f5d21170fc81a8a1b94ab432d592b7"
 
-        if not hits:
-            return "No useful search results found"
+
+def _fetch_serper(query: str) -> str:
+    try:
+        headers = {
+            "X-API-KEY": SERPER_API_KEY,
+            "Content-Type": "application/json"
+        }
+
+        payload = {"q": query}
+
+        with httpx.Client(timeout=10.0) as client:
+            res = client.post(SERPER_URL, headers=headers, json=payload)
+            data = res.json()
+
+        results = data.get("organic", [])
+
+        if not results:
+            return "No reliable search results found"
 
         parts = []
 
-        first = hits[0]
-        if first.get("title"):
-            parts.append(first["title"])
-        if first.get("body"):
-            parts.append(first["body"])
-        if first.get("href"):
-            parts.append(first["href"])
-
-        for h in hits[1:3]:
-            if h.get("title"):
-                parts.append(h["title"])
+        for r in results[:5]:
+            if r.get("title"):
+                parts.append(r["title"])
+            if r.get("snippet"):
+                parts.append(r["snippet"])
 
         return " | ".join(parts)
 
     except Exception as e:
-        logger.warning(f"duckduckgo_search failed: {e}")
+        logger.warning(f"serper search failed: {e}")
         return "Search failed"
 
 
-def search_ddg(query: str) -> Dict[str, str]:
+def search_web(query: str) -> Dict[str, str]:
     with _cache_lock:
-        cached = _ddg_cache.get(query)
+        cached = _cache.get(query)
 
     if cached is not None:
-        _record_tool_call("duckduckgo_search", query, cached[:400])
+        _record_tool_call("serper_search", query, cached[:400])
         return {"query": query, "summary": cached}
 
-    txt = _fetch_ddg(query)
+    txt = _fetch_serper(query)
 
     with _cache_lock:
-        _ddg_cache[query] = txt
+        _cache[query] = txt
 
-    _record_tool_call("duckduckgo_search", query, txt[:400])
+    _record_tool_call("serper_search", query, txt[:400])
     return {"query": query, "summary": txt}
 
 
-async def asearch_ddg(query: str) -> Dict[str, str]:
+async def asearch_web(query: str) -> Dict[str, str]:
     loop = asyncio.get_event_loop()
-    txt = await loop.run_in_executor(None, lambda: search_ddg(query)["summary"])
+    txt = await loop.run_in_executor(None, lambda: search_web(query)["summary"])
     return {"query": query, "summary": txt}
 
 
 # =========================
-# PRICE SEARCH (FIXED ✅)
+# ✅ PRICE SEARCH (USES SERPER NOW)
 # =========================
 
 def price_search(item: str, vehicle: str = "") -> Dict[str, Any]:
     query = f"{item} cost estimate price {vehicle}".strip()
-    res = search_ddg(query)
+    res = search_web(query)
 
     summary = res.get("summary", "")
 
@@ -114,7 +122,7 @@ def price_search(item: str, vehicle: str = "") -> Dict[str, Any]:
         "item": item,
         "status": "ok",
         "estimated_info": summary[:500],
-        "confidence": 0.6
+        "confidence": 0.7
     }
 
 
@@ -125,29 +133,7 @@ async def aprice_search(item: str, vehicle: str = "") -> Dict[str, Any]:
 
 
 # =========================
-# OPTIONAL: BATCH PRICE BENCHMARK
-# =========================
-
-def price_benchmark(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    results = []
-
-    for item in items:
-        name = item.get("name", "")
-        vehicle = item.get("vehicle", "")
-
-        res = price_search(name, vehicle)
-
-        results.append({
-            "item": name,
-            "input_price": item.get("price"),
-            "market_data": res
-        })
-
-    return results
-
-
-# =========================
-# VIN LOOKUP
+# VIN LOOKUP (UNCHANGED ✅)
 # =========================
 
 def vin_lookup(vin: str) -> Dict[str, Any]:
