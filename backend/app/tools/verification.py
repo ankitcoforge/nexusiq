@@ -465,7 +465,9 @@ async def verify_vin(invoice: InvoiceData) -> VINCheckResult:
     vin_valid = False
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        cert_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "combined.pem")
+        ssl_context = cert_path if os.path.exists(cert_path) else False
+        async with httpx.AsyncClient(timeout=10.0, verify=ssl_context) as client:
             resp = await client.get(f"https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{vin}?format=json")
             data = resp.json()
             results = data.get("Results", [{}])[0]

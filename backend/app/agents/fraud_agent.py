@@ -9,6 +9,7 @@ from ..models.schemas import (
 )
 from ..tools.verification import verify_arithmetic, verify_vendor, verify_prices, verify_vin
 from ..services.coforge_llm import invoke_llm
+from ..services.langchain_tools import search_web
 from ..utils.guardrails import apply_guardrails
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,34 @@ def _step1_summary(invoice: InvoiceData) -> VerificationStepResult:
     thought += f"VIN: {invoice.vehicle.vin.value} (conf: {invoice.vehicle.vin.confidence:.2f})\n"
     thought += f"Line items: {len(invoice.line_items)}\n"
     thought += f"Invoice total: ${invoice.total:.2f}\n"
+
+    # --- Internet search to validate extracted data ---
+    vendor_name = invoice.vendor.name.value or ""
+    if vendor_name:
+        thought += f"\n🔍 Searching internet for vendor: {vendor_name}\n"
+        try:
+            web_result = search_web(f"{vendor_name} business reviews location")
+            web_summary = web_result.get("summary", "")
+            if web_summary and "failed" not in web_summary.lower():
+                thought += f"Web results: {web_summary[:300]}\n"
+
+                web_lower = web_summary.lower()
+                if any(w in web_lower for w in ["scam", "fraud", "fake", "complaint"]):
+                    flags.append(FraudFlag(
+                        check_name="Vendor Web Presence",
+                        severity=FraudFlagSeverity.WARNING,
+                        message=f"Negative signals found online for '{vendor_name}'",
+                        details=web_summary[:200]
+                    ))
+                    thought += "⚠️ Negative signals detected in web results\n"
+                elif any(w in web_lower for w in ["official", "verified", "established", "franchise"]):
+                    thought += "✓ Vendor appears to have legitimate web presence\n"
+                else:
+                    thought += "ℹ️ Vendor found online, no strong signals either way\n"
+            else:
+                thought += "⚠️ No web results found for vendor\n"
+        except Exception as e:
+            thought += f"⚠️ Web search unavailable: {e}\n"
 
     if low_confidence:
         thought += f"\n⚠️ Low confidence fields: {', '.join(low_confidence)}\n"

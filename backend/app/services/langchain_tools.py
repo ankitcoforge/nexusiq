@@ -143,9 +143,11 @@ def vin_lookup(vin: str) -> Dict[str, Any]:
         return {"vin": vin, "error": "empty"}
 
     url = f"https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{vin}?format=json"
+    cert_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "combined.pem")
+    ssl_verify = cert_path if os.path.exists(cert_path) else False
 
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=10.0, verify=ssl_verify) as client:
             resp = client.get(url)
             resp.raise_for_status()
             data = resp.json()
@@ -175,9 +177,11 @@ async def avin_lookup(vin: str) -> Dict[str, Any]:
         return {"vin": vin, "error": "empty"}
 
     url = f"https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{vin}?format=json"
+    cert_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "combined.pem")
+    ssl_verify = cert_path if os.path.exists(cert_path) else False
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, verify=ssl_verify) as client:
             resp = await client.get(url)
             data = resp.json()
 

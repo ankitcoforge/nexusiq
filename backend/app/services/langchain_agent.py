@@ -1,32 +1,102 @@
 import asyncio
 import json
-from typing import Optional
+import logging
+import os
+from typing import Optional, List, Any, Sequence
 
-from langchain.agents import create_openai_tools_agent, AgentExecutor
-from langchain.tools import Tool
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.llms.base import LLM
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.outputs import ChatResult, ChatGeneration
+from langchain.agents import create_agent
+from langchain.tools import tool
 
 from .coforge_llm import invoke_llm, ainvoke_llm
-from .langchain_tools import search_ddg, price_search, vin_lookup, get_tool_calls
+from .langchain_tools import search_web, price_search, vin_lookup, get_tool_calls
+
+logger = logging.getLogger(__name__)
 
 
 # =========================
-# LLM WRAPPER
+# CHAT MODEL WRAPPER
 # =========================
-class CoforgeLLM(LLM):
+class CoforgeChatModel(BaseChatModel):
+    """Custom ChatModel wrapper for Coforge Quasar Marketplace."""
+
+    model_name: str = os.getenv("MODEL_NAME", "gpt-4o-mini")
+
     @property
     def _llm_type(self) -> str:
-        return "coforge"
+        return "coforge-chat"
 
-    def _call(self, prompt: str, stop: Optional[list] = None,**kwargs) -> str:
-        return invoke_llm(prompt)
+    def _generate(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        """Call Coforge LLM with formatted messages."""
+        import httpx
+        from dotenv import load_dotenv
 
-    async def _acall(self, prompt: str, stop: Optional[list] = None,**kwargs) -> str:
-        return await ainvoke_llm(prompt)
+        load_dotenv()
+
+        api_url = os.getenv("API_URL", "https://quasarmarket.coforge.com/qag/llmrouter-api/v2")
+        api_key = os.getenv("API_KEY")
+
+        formatted = []
+        for m in messages:
+            if isinstance(m, SystemMessage):
+                formatted.append({"role": "system", "content": m.content})
+            elif isinstance(m, HumanMessage):
+                formatted.append({"role": "user", "content": m.content})
+            elif isinstance(m, AIMessage):
+                formatted.append({"role": "assistant", "content": m.content})
+            else:
+                formatted.append({"role": "user", "content": m.content})
+
+        payload = {
+            "model": self.model_name,
+            "temperature": 0.1,
+            "max_tokens": 800,
+            "messages": formatted,
+        }
+        headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
+
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post(api_url, headers=headers, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+
+        content = data["choices"][0]["message"]["content"]
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=content))])
 
 
-_AGENT_EXECUTOR = None
+# =========================
+# TOOLS (using @tool decorator)
+# =========================
+@tool
+def web_search(query: str) -> str:
+    """Search the internet for vendor reviews, complaints, legitimacy, or general info."""
+    result = search_web(query)
+    return result.get("summary", "No results found")
+
+
+@tool
+def market_price_search(item: str) -> str:
+    """Get market price estimates for an item or service."""
+    result = price_search(item)
+    if result.get("status") == "ok":
+        return result.get("estimated_info", "No price data")
+    return "No reliable market data found"
+
+
+@tool
+def vin_decode(vin: str) -> str:
+    """Decode a Vehicle Identification Number (VIN) to get make, model, year."""
+    result = vin_lookup(vin)
+    if "error" in result:
+        return f"VIN lookup failed: {result['error']}"
+    return result.get("summary", "No VIN data")
 
 
 # =========================
@@ -54,82 +124,63 @@ def _safe_parse(text: str):
 
 
 # =========================
-# AGENT CREATION ✅ FINAL
+# AGENT CREATION (langchain 1.2.x)
 # =========================
-def _make_agent():
-    tools = [
-        Tool.from_function(
-            name="duckduckgo_search",
-            func=search_ddg,
-            description="Search vendor reviews, complaints, legitimacy"
-        ),
-        Tool.from_function(
-            name="price_search",
-            func=price_search,
-            description="Get market price estimates"
-        ),
-        Tool.from_function(
-            name="vin_lookup",
-            func=vin_lookup,
-            description="Decode VIN details"
-        ),
-    ]
+_AGENT = None
 
-    llm = CoforgeLLM()
+SYSTEM_PROMPT = """You are a fraud detection AI.
 
-    # ✅ FIXED PROMPT (ESCAPED JSON ✅)
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a fraud detection AI.
+Use the available tools to search for vendor information, market prices, and VIN details when needed.
 
-Use tools when needed.
-
-Return ONLY valid JSON.
-
-Format:
-{{
+After gathering information, return ONLY valid JSON in this format:
+{
  "assessment": "likely_legitimate|suspicious|needs_verification",
  "confidence": 0.0,
  "reasoning": "",
  "red_flags": [],
  "recommendation": ""
-}}
-"""),
-        ("human", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad")
-    ])
+}
+"""
 
-    agent = create_openai_tools_agent(
-        llm=llm,
-        tools=tools,
-        prompt=prompt
-    )
 
-    return AgentExecutor(
-        agent=agent,
+def _make_agent():
+    """Create the fraud detection agent using langchain create_agent."""
+    llm = CoforgeChatModel()
+    tools = [web_search, market_price_search, vin_decode]
+
+    agent = create_agent(
+        model=llm,
         tools=tools,
-        handle_parsing_errors=True,
-        verbose=False,
-        max_iterations=3
+        system_prompt=SYSTEM_PROMPT,
+        name="fraud_detection_agent",
     )
+    return agent
 
 
 # =========================
-# EXECUTION ✅ FORCE RELOAD
+# EXECUTION
 # =========================
 def run_agent_sync(prompt: str):
-    global _AGENT_EXECUTOR
-
-    # ✅ IMPORTANT: prevent cached broken agent
-    _AGENT_EXECUTOR = _make_agent()
+    """Run the fraud detection agent synchronously."""
+    global _AGENT
+    _AGENT = _make_agent()
 
     try:
-        response = _AGENT_EXECUTOR.invoke({"input": prompt})
-        raw_output = response.get("output", "")
+        result = _AGENT.invoke({"messages": [{"role": "user", "content": prompt}]})
+
+        # Extract final AI message content
+        messages = result.get("messages", [])
+        raw_output = ""
+        for msg in reversed(messages):
+            if hasattr(msg, "content") and msg.content:
+                raw_output = msg.content
+                break
 
         cleaned = _clean_json(raw_output)
         return _safe_parse(cleaned)
 
     except Exception as e:
+        logger.error(f"Agent execution failed: {e}")
         return {
             "assessment": "error",
             "confidence": 0,
@@ -140,6 +191,7 @@ def run_agent_sync(prompt: str):
 
 
 async def run_agent_async(prompt: str):
+    """Run the fraud detection agent asynchronously."""
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, run_agent_sync, prompt)
 
