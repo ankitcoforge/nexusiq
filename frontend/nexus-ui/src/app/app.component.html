@@ -1,0 +1,17 @@
+<div class="container my-4">
+  <div class="chat-card">
+    <app-header [health]="healthStatus"></app-header>
+    <app-chat [messages]="messages" [sessionId]="sessionId"></app-chat>
+
+    <div class="chat-input">
+      <app-input
+        [showAnalyze]="fileReady"
+        (fileSelected)="onFile($event)"
+        (analyze)="onAnalyze()"
+        (send)="onSend($event)"
+      ></app-input>
+    </div>
+  </div>
+</div>
+
+<router-outlet></router-outlet>

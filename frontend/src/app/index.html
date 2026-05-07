@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>NexusIQ — Fraud Detection</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .chat-container{height:calc(100vh - 200px);overflow-y:auto}
+  .thought-content{max-height:0;overflow:hidden;transition:max-height 0.3s ease}
+  .thought-content.open{max-height:2000px}
+  .step-card{animation:fadeIn 0.3s ease}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .spinner{display:inline-block;width:16px;height:16px;border:2px solid #e5e7eb;border-top-color:#3b82f6;border-radius:50%;animation:spin 0.8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+<div class="max-w-4xl mx-auto p-4">
+  <!-- Header -->
+  <div class="bg-white rounded-xl shadow-sm p-4 mb-4 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <span class="text-2xl">🔍</span>
+      <div>
+        <h1 class="text-xl font-bold text-gray-800">NexusIQ</h1>
+        <p class="text-xs text-gray-500">Document Fraud Detection</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <span id="status-badge" class="px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-600">Ready</span>
+      <button id="export-btn" onclick="exportPDF()" class="hidden bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">📄 Export PDF</button>
+    </div>
+  </div>
+
+  <!-- Chat -->
+  <div id="chat-messages" class="chat-container bg-white rounded-xl shadow-sm p-4 mb-4 space-y-3"></div>
+
+  <!-- Input Area -->
+  <div class="bg-white rounded-xl shadow-sm p-4">
+    <div class="flex gap-2 items-end">
+      <label class="cursor-pointer flex-shrink-0">
+        <span class="bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-2 rounded-lg text-lg" title="Upload PDF">📎</span>
+        <input type="file" id="file-input" accept=".pdf" class="hidden" onchange="handleFileUpload(event)"/>
+      </label>
+      <input id="chat-input" type="text" placeholder="Ask about the fraud analysis..." class="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" onkeydown="if(event.key==='Enter')sendChat()"/>
+      <button id="analyze-btn" onclick="runAnalysis()" class="hidden bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700">🔎 Analyze</button>
+      <button onclick="sendChat()" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API_BASE = "http://localhost:8000/api";
+let sessionId = null;
+let currentState = "init";
+
+function setStatus(text, cls="bg-gray-100 text-gray-600"){
+  const b = document.getElementById("status-badge");
+  b.textContent = text;
+  b.className = `px-3 py-1 rounded-full text-sm font-medium ${cls}`;
+}
+
+function addMessage(role, content, type="text", data=null){
+  const container = document.getElementById("chat-messages");
+  const div = document.createElement("div");
+  const isUser = role === "user";
+  div.className = `flex ${isUser ? "justify-end" : "justify-start"}`;
+
+  if(type === "extraction" && data){
+    div.innerHTML = `<div class="w-full">${renderExtraction(data)}</div>`;
+  } else if(type === "step" && data){
+    div.innerHTML = `<div class="w-full">${renderStep(data)}</div>`;
+  } else if(type === "verdict" && data){
+    div.innerHTML = `<div class="w-full">${renderVerdict(data)}</div>`;
+  } else {
+    const md = content.replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/\n/g,"<br/>");
+    div.innerHTML = `<div class="max-w-2xl px-4 py-2 rounded-2xl text-sm ${isUser ? "bg-blue-600 text-white rounded-br-sm" : "bg-gray-100 text-gray-800 rounded-bl-sm"}">${md}</div>`;
+  }
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function confidenceBadge(conf){
+  if(conf < 0.5) return `<span class="ml-1 text-xs bg-red-100 text-red-700 px-1 rounded">Needs Review</span>`;
+  if(conf < 0.8) return `<span class="ml-1 text-xs bg-amber-100 text-amber-700 px-1 rounded">Low Confidence</span>`;
+  return "";
+}
+
+function field(label, obj){
+  const val = obj?.value || "—";
+  const conf = obj?.confidence || 0;
+  return `<div class="flex items-center gap-1 text-sm py-1 border-b border-blue-100">
+    <span class="text-gray-500 w-32 flex-shrink-0">${label}:</span>
+    <span class="font-medium">${val}</span>${confidenceBadge(conf)}
+  </div>`;
+}
+
+function renderExtraction(data){
+  const items = (data.line_items||[]).map(i=>`
+    <tr class="border-t border-blue-100 text-sm">
+      <td class="py-1 pr-2">${i.description}</td>
+      <td class="py-1 text-center">${i.quantity}</td>
+      <td class="py-1 text-right">$${i.unit_price.toFixed(2)}</td>
+      <td class="py-1 text-right font-medium">$${i.total.toFixed(2)}</td>
+    </tr>`).join("");
+
+  return `<div class="bg-blue-50 border border-blue-200 rounded-xl p-4 step-card">
+    <div class="flex items-center gap-2 mb-3"><span class="text-blue-600 font-bold">📋 Extracted Invoice Data</span></div>
+    <div class="grid grid-cols-2 gap-x-4">
+      <div>
+        <p class="text-xs font-bold text-gray-500 uppercase mb-1">Invoice</p>
+        ${field("Number", data.invoice_number)}
+        ${field("Date", data.invoice_date)}
+        <p class="text-xs font-bold text-gray-500 uppercase mt-2 mb-1">Vendor</p>
+        ${field("Name", data.vendor?.name)}
+        ${field("Address", data.vendor?.address)}
+        ${field("Phone", data.vendor?.phone)}
+      </div>
+      <div>
+        <p class="text-xs font-bold text-gray-500 uppercase mb-1">Customer</p>
+        ${field("Name", data.customer?.name)}
+        ${field("Phone", data.customer?.phone)}
+        <p class="text-xs font-bold text-gray-500 uppercase mt-2 mb-1">Vehicle</p>
+        ${field("Year/Make/Model", {value: `${data.vehicle?.year?.value||""} ${data.vehicle?.make?.value||""} ${data.vehicle?.model?.value||""}`, confidence: Math.min(data.vehicle?.year?.confidence||0, data.vehicle?.make?.confidence||0)})}
+        ${field("VIN", data.vehicle?.vin)}
+        ${field("Mileage", data.vehicle?.mileage)}
+      </div>
+    </div>
+    ${items ? `<div class="mt-3"><p class="text-xs font-bold text-gray-500 uppercase mb-1">Line Items</p>
+    <table class="w-full"><thead><tr class="text-xs text-gray-500"><th class="text-left">Description</th><th class="text-center">Qty</th><th class="text-right">Price</th><th class="text-right">Total</th></tr></thead>
+    <tbody>${items}</tbody></table>
+    <div class="mt-2 text-right text-sm"><span class="mr-4">Subtotal: <strong>$${(data.subtotal||0).toFixed(2)}</strong></span><span class="mr-4">Tax (${data.tax_rate||0}%): <strong>$${(data.tax_amount||0).toFixed(2)}</strong></span><span class="text-lg">Total: <strong>$${(data.total||0).toFixed(2)}</strong></span></div></div>` : ""}
+  </div>`;
+}
+
+function stepStatusStyle(status){
+  const map = {passed:"bg-green-500",failed:"bg-red-500",warning:"bg-amber-500",unavailable:"bg-gray-400",manual_review:"bg-purple-500"};
+  return map[status] || "bg-gray-400";
+}
+
+function renderStep(data){
+  const flags = (data.flags||[]).map(f=>{
+    const col = f.severity==="critical"?"bg-red-50 text-red-700 border-red-200":f.severity==="warning"?"bg-amber-50 text-amber-700 border-amber-200":"bg-blue-50 text-blue-700 border-blue-200";
+    return `<div class="mt-1 px-3 py-2 rounded border text-xs ${col}">⚑ [${f.severity.toUpperCase()}] ${f.message}</div>`;
+  }).join("");
+  const thought = data.thought_process ? `
+    <button onclick="toggleThought('thought-${data.step_number}')" class="mt-2 text-xs text-gray-400 hover:text-gray-600">💭 Show Thought Process</button>
+    <div id="thought-${data.step_number}" class="thought-content">
+      <pre class="mt-2 text-xs text-gray-600 font-mono whitespace-pre-wrap bg-gray-50 rounded p-2">${data.thought_process}</pre>
+    </div>` : "";
+  return `<div class="bg-white border border-gray-200 rounded-xl p-4 step-card">
+    <div class="flex items-center gap-2">
+      <span class="w-6 h-6 rounded-full ${stepStatusStyle(data.status)} text-white text-xs flex items-center justify-center font-bold">${data.step_number}</span>
+      <span class="font-medium text-sm text-gray-700">${data.step_name}</span>
+      <span class="ml-auto text-xs text-gray-400">${(data.duration_seconds||0).toFixed(1)}s</span>
+    </div>
+    <p class="mt-2 text-sm text-gray-600">${data.summary}</p>
+    ${flags}${thought}
+  </div>`;
+}
+
+function renderVerdict(report){
+  const col = report.verdict==="Approve for Processing"?"bg-green-500":report.verdict==="Approve with Notation"?"bg-amber-500":"bg-red-500";
+  const flags = (report.total_flags||0);
+  const critical = (report.critical_flags||0);
+  return `<div class="rounded-xl overflow-hidden border border-gray-200 step-card">
+    <div class="px-6 py-4 ${col} text-white">
+      <div class="text-xl font-bold">🏙️ ${report.verdict}</div>
+      <div class="text-sm opacity-90 mt-1">${report.verdict_reasoning||""}</div>
+    </div>
+    <div class="bg-white px-6 py-4">
+      <div class="flex gap-6 text-sm mb-3">
+        <span>Total Flags: <strong>${flags}</strong></span>
+        <span>Critical: <strong class="${critical>0?"text-red-600":""}}">${critical}</strong></span>
+      </div>
+      ${report.recommendation ? `<p class="text-sm text-gray-600">💡 ${report.recommendation}</p>` : ""}
+      <button onclick="document.getElementById('export-btn').click()" class="mt-3 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">📄 Download PDF Report</button>
+    </div>
+  </div>`;
+}
+
+function toggleThought(id){
+  const el = document.getElementById(id);
+  if(el) el.classList.toggle("open");
+}
+
+async function initSession(){
+  setStatus("Connecting...", "bg-yellow-100 text-yellow-700");
+  try{
+    const r = await fetch(`${API_BASE}/session`, {method:"POST"});
+    if(!r.ok) throw new Error("Failed to connect");
+    const data = await r.json();
+    sessionId = data.session_id;
+    (data.chat_history||[]).forEach(m => addMessage(m.role, m.content, m.message_type, m.data));
+    setStatus("Ready", "bg-green-100 text-green-700");
+  } catch(e){
+    addMessage("assistant", "⚠️ Could not connect to backend. Make sure the server is running on port 8000.", "error");
+    setStatus("Error", "bg-red-100 text-red-700");
+  }
+}
+
+async function handleFileUpload(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  if(!file.name.toLowerCase().endsWith(".pdf")){addMessage("assistant","❌ Only PDF files are supported.");return;}
+  if(file.size > 25*1024*1024){addMessage("assistant","❌ File size must be under 25MB.");return;}
+  if(!sessionId){addMessage("assistant","❌ Session not ready.");return;}
+  setStatus("Uploading...", "bg-yellow-100 text-yellow-700");
+  const fd = new FormData();
+  fd.append("file", file);
+  try{
+    const r = await fetch(`${API_BASE}/upload/${sessionId}`, {method:"POST", body:fd});
+    const data = await r.json();
+    if(!r.ok) throw new Error(data.detail||"Upload failed");
+    addMessage("user", `📎 Uploaded: ${file.name}`);
+    addMessage("assistant", data.message);
+    document.getElementById("analyze-btn").classList.remove("hidden");
+    setStatus("File Ready", "bg-blue-100 text-blue-700");
+    currentState = "uploaded";
+  } catch(e){
+    addMessage("assistant", `❌ Upload failed: ${e.message}`);
+    setStatus("Error", "bg-red-100 text-red-700");
+  }
+  event.target.value = "";
+}
+
+async function runAnalysis(){
+  if(!sessionId) return;
+  document.getElementById("analyze-btn").classList.add("hidden");
+  setStatus("Extracting...", "bg-blue-100 text-blue-700");
+  addMessage("assistant", "🔍 Extracting invoice data...");
+
+  // Extract
+  try{
+    const r = await fetch(`${API_BASE}/extract/${sessionId}`, {method:"POST"});
+    if(!r.ok){const d=await r.json();throw new Error(d.detail);}
+    const data = await r.json();
+    addMessage("assistant", "📋 Extraction complete!", "extraction", data.invoice_data);
+  } catch(e){
+    addMessage("assistant", `❌ Extraction failed: ${e.message}`);
+    setStatus("Error","bg-red-100 text-red-700");
+    return;
+  }
+
+  // Verify (streaming)
+  setStatus("Verifying...", "bg-purple-100 text-purple-700");
+  addMessage("assistant", "🤖 Running 5-step fraud verification pipeline...");
+  try{
+    const r = await fetch(`${API_BASE}/verify/${sessionId}`, {method:"POST"});
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while(true){
+      const {done, value} = await reader.read();
+      if(done) break;
+      buffer += decoder.decode(value, {stream:true});
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      for(const line of lines){
+        if(!line.trim()) continue;
+        try{
+          const update = JSON.parse(line);
+          if(update.type === "step_start"){
+            addMessage("assistant", `<span class="spinner"></span> Step ${update.step}/5: ${update.name}...`);
+          } else if(update.type === "step_complete"){
+            addMessage("assistant","",  "step", update.result);
+          } else if(update.type === "report"){
+            addMessage("assistant", "", "verdict", update.report);
+            document.getElementById("export-btn").classList.remove("hidden");
+            setStatus("Complete ✓", "bg-green-100 text-green-700");
+          }
+        } catch(e){ console.warn("Parse error:", line); }
+      }
+    }
+  } catch(e){
+    addMessage("assistant", `❌ Verification failed: ${e.message}`);
+    setStatus("Error","bg-red-100 text-red-700");
+  }
+}
+
+async function sendChat(){
+  const input = document.getElementById("chat-input");
+  const msg = input.value.trim();
+  if(!msg || !sessionId) return;
+  input.value = "";
+  addMessage("user", msg);
+  try{
+    const r = await fetch(`${API_BASE}/chat/${sessionId}/message`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:msg})});
+    const data = await r.json();
+    addMessage("assistant", data.response);
+  } catch(e){
+    addMessage("assistant", "Sorry, I could not process your message.");
+  }
+}
+
+async function exportPDF(){
+  if(!sessionId) return;
+  window.open(`${API_BASE}/report/${sessionId}/pdf`, "_blank");
+}
+
+initSession();
+</script>
+</body>
+</html>

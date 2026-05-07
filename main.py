@@ -1,36 +1,49 @@
-from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
 import os
+import requests
+from typing import Optional, List
+from dotenv import load_dotenv
+from langchain_core.language_models import LLM
 
-# Load environment variables from .env
-load_dotenv()
+# Load env once when module is imported
+load_dotenv(override=True)
 
-def main():
-    api_key = os.getenv("API_KEY")
-    api_url = os.getenv("API_URL")
-    model   = os.getenv("MODEL_NAME", "gpt-5-mini")
 
-    # Quasar Marketplace uses x-api-key header (not Bearer token)
-    llm = ChatOpenAI(
-        model=model,
-        temperature=0.7,
-        openai_api_key="placeholder",   # required by SDK but overridden by default_headers
-        openai_api_base=api_url,
-        default_headers={"x-api-key": api_key}
-    )
+class CoforgeAIGardenLLM(LLM):
+    temperature: float = 0.2
+    max_tokens: int = 1024
 
-    messages = [
-        SystemMessage(content="You are a helpful assistant."),
-        HumanMessage(content="Hello! What can LangChain help me build?")
-    ]
+    @property
+    def _llm_type(self) -> str:
+        return "coforge-ai-garden"
 
-    print(f"🚀 Connecting to Quasar Marketplace...")
-    print(f"   Model : {model}")
-    print(f"   URL   : {api_url}\n")
+    def _call(
+        self,
+        prompt: str,
+        stop: Optional[List[str]] = None
+    ) -> str:
 
-    response = llm.invoke(messages)
-    print("✅ Response:", response.content)
+        payload = {
+            "model": os.getenv("MODEL_NAME"),
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens
+        }
 
-if __name__ == "__main__":
-    main()
+        if stop:
+            payload["stop"] = stop
+
+        response = requests.post(
+            os.getenv("API_URL"),
+            headers={
+                "Content-Type": "application/json",
+                "X-API-KEY": os.getenv("API_KEY")
+            },
+            json=payload,
+            timeout=60
+        )
+
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"]

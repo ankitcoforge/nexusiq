@@ -1,0 +1,416 @@
+.chat-container {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.chat-container { border-top-left-radius: 0.25rem; border-top-right-radius: 0.25rem; }
+
+.chat-container .no-messages {
+	margin: auto;
+	color: var(--muted);
+}
+
+.messages-list {
+	display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    height: 100%;
+    overflow: auto;
+}
+
+.message { line-height: 1.25; }
+
+:host { display: block; height: 100%; }
+.extraction-card {
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+
+  .card-body {
+    padding: 16px;
+  }
+
+  /* HEADER */
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  .title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #2563eb;
+  }
+
+  .subtitle {
+    font-size: 12px;
+    color: #9ca3af;
+  }
+
+  /* GRID */
+  .grid {
+    display: flex;
+    gap: 24px;
+  }
+
+  .column {
+    flex: 1;
+  }
+
+  /* SECTION LABELS */
+  .section {
+    font-size: 11px;
+    font-weight: 600;
+    color: #6b7280;
+    margin: 12px 0 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+
+  /* FIELD */
+  .field {
+    display: grid;
+    grid-template-columns: 120px 1fr auto;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid #f1f5f9;
+
+    label {
+      font-size: 13px;
+      color: #374151;
+      font-weight: 500;
+    }
+
+    span {
+      font-size: 13px;
+      color: #111827;
+    }
+  }
+
+  /* BADGE (fixed) */
+  .badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: #fee2e2;
+    color: #b91c1c;
+    margin-left: 6px;
+    white-space: nowrap;
+  }
+
+  /* LINE ITEMS */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 8px;
+
+    th {
+      text-align: left;
+      font-size: 12px;
+      color: #6b7280;
+      padding-bottom: 6px;
+    }
+
+    td {
+      font-size: 13px;
+      padding: 6px 0;
+      border-top: 1px solid #f1f5f9;
+    }
+
+    .right {
+      text-align: right;
+    }
+
+    .center {
+      text-align: center;
+    }
+
+    .strong {
+      font-weight: 600;
+    }
+  }
+
+  /* TOTALS */
+  .totals {
+    display: flex;
+    justify-content: flex-end;
+    gap: 20px;
+    margin-top: 10px;
+    font-size: 13px;
+    color: #6b7280;
+
+    strong {
+      color: #111827;
+    }
+
+    .grand {
+      font-size: 15px;
+      font-weight: 600;
+    }
+  }
+}.step-card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  transition: all 0.2s ease;
+  margin-bottom: 14px;
+
+  &:hover {
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.05);
+  }
+
+  .card-body {
+    padding: 16px;
+  }
+
+  /* HEADER */
+  .step-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  /* STEP BADGE (FIX: modern square instead of circle) */
+  .step-badge {
+    min-width: 34px;
+    height: 34px;
+
+    border-radius: 10px; // FIXED
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    font-size: 13px;
+    font-weight: 600;
+    color: #fff; // FIXED (contrast)
+  }
+
+  /* ✅ STATUS COLORS (FIXED: more professional palette) */
+  .success,.passed {
+    background: #16a34a;
+  }
+
+  .warning,.manual_review {
+    background: #f59e0b;
+  }
+
+  .error,.failed,.unavailable {
+    background: #dc2626;
+  }
+
+  .info {
+    background: #2563eb;
+  }
+
+  /* TEXT */
+  .step-main {
+    flex: 1;
+  }
+
+  .step-title {
+    font-size: 15px; // improved hierarchy
+    font-weight: 600;
+    color: #111827;
+  }
+
+  .step-summary {
+    font-size: 13px; // FIXED readability
+    color: #6b7280;
+    margin-top: 3px;
+    line-height: 1.4;
+  }
+
+  .step-time {
+    font-size: 12px;
+    color: #9ca3af;
+    white-space: nowrap;
+  }
+
+  /* FLAGS */
+  .flags {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .flag {
+    padding: 8px 10px;
+    font-size: 12px;
+    border-radius: 8px;
+    border: 1px solid;
+    display: flex;
+    gap: 8px;
+  }
+
+  /* ✅ FIX: remove conflict with header .warning */
+  .flag.critical {
+    background: #fef2f2;
+    border-color: #fecaca;
+    color: #b91c1c;
+  }
+
+  .flag.warning {
+    background: #fffbeb;
+    border-color: #fde68a;
+    color: #92400e;
+  }
+
+  .flag.info {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+    color: #1d4ed8;
+  }
+
+  /* THOUGHT */
+  .thought-toggle {
+    margin-top: 12px;
+    padding: 6px 10px;
+
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+
+    background: #ffffff;
+    font-size: 12px;
+    font-weight: 500;
+
+    color: #374151;
+    cursor: pointer;
+
+    transition: all 0.15s ease;
+
+    &:hover {
+      background: #f9fafb;
+      border-color: #d1d5db;
+    }
+  }
+
+  .thought-content {
+    margin-top: 8px;
+    padding: 10px;
+
+    background: #f9fafb;
+    border-radius: 8px;
+
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    color: #374151;
+    line-height: 1.5;
+  }
+}
+.verdict-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #ffffff;
+
+  .card-body {
+    padding: 14px;
+  }
+
+  /* HEADER */
+  .verdict-header {
+    padding: 12px 14px;
+    color: #ffffff;
+
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .verdict-title {
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .verdict-reason {
+    font-size: 12px;
+    opacity: 0.85;
+  }
+
+  /* STATUS COLORS */
+  .approve {
+    background: #16a34a;
+  }
+
+  .warning {
+    background: #facc15;
+    color: #111827;
+  }
+
+  .reject {
+    background: #dc2626;
+  }
+
+  /* STATS */
+  .stats {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+
+    margin-bottom: 10px;
+  }
+
+  .stat {
+    font-size: 12px;
+    color: #6b7280;
+
+    strong {
+      margin-left: 4px;
+      color: #111827;
+    }
+  }
+
+  .danger {
+    color: #dc2626;
+  }
+
+  /* DOWNLOAD BUTTON */
+  .download-btn {
+    margin-left: auto;
+
+    border: none;
+    background: #111827;
+    color: #ffffff;
+
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+
+    cursor: pointer;
+    transition: 0.2s;
+
+    &:hover {
+      background: #000000;
+    }
+  }
+
+  /* RECOMMENDATION */
+  .recommendation {
+    font-size: 12px;
+    color: #6b7280;
+    background: #f9fafb;
+
+    border-radius: 8px;
+    padding: 8px;
+  }
+}
+.progress-bar {
+  height: 4px;
+  border-radius: 4px;
+}
+
+.approve-bar {
+  background: #16a34a;
+}
+
+.warning-bar {
+  background: #facc15;
+}
+
+.reject-bar {
+  background: #dc2626;
+}

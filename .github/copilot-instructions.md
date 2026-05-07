@@ -89,7 +89,7 @@ C:\nexusiqapp\
 
 ## Do's and Don'ts
 | ✅ Do | ❌ Don't |
-|-------|---------|
+|-------|--------|
 | Use environment variables for secrets | Hardcode API keys |
 | Return fraud score + explanation | Return just True/False |
 | Log all fraud decisions | Use bare `print()` statements |

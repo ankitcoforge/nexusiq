@@ -1,0 +1,288 @@
+<div id="chat-messages" class="chat-body p-3">
+  <div class="messages-list">
+    <ng-container *ngIf="messages.length; else empty">
+      <div
+        *ngFor="let m of messages"
+        class="d-flex mb-3"
+        [class.justify-content-end]="m.role === 'user'"
+        [class.justify-content-start]="m.role !== 'user'"
+      >
+        <!-- User / simple text bubble -->
+        <ng-container
+          *ngIf="!m.type || m.type === 'text' || m.type === 'error'"
+        >
+          <div
+            class="message p-2 px-3 rounded"
+            [class.user]="m.role === 'user'"
+            [class.bot]="m.role !== 'user'"
+            [innerHTML]="m.content"
+          ></div>
+        </ng-container>
+
+        <ng-container *ngIf="m.type === 'extraction' && m.data">
+          <div class="card extraction-card">
+            <div class="card-body">
+              <!-- Header -->
+              <div class="header">
+                <div class="title">📋 Extracted Invoice Data</div>
+                <div class="subtitle">
+                  Confidence indicators shown where available
+                </div>
+              </div>
+
+              <!-- Content -->
+              <div class="grid">
+                <!-- LEFT -->
+                <div class="column">
+                  <div class="section">Invoice</div>
+
+                  <div class="field">
+                    <label>Number</label>
+                    <span>{{ m.data.invoice_number?.value || "—" }}</span>
+                    <span
+                      *ngIf="m.data.invoice_number?.confidence < 0.8"
+                      class="badge"
+                    >
+                      Needs Review
+                    </span>
+                  </div>
+
+                  <div class="field">
+                    <label>Date</label>
+                    <span>{{ m.data.invoice_date?.value || "—" }}</span>
+                    <span
+                      *ngIf="m.data.invoice_date?.confidence < 0.8"
+                      class="badge"
+                    >
+                      Needs Review
+                    </span>
+                  </div>
+
+                  <div class="section">Vendor</div>
+
+                  <div class="field">
+                    <label>Name</label>
+                    <span>{{ m.data.vendor?.name?.value || "—" }}</span>
+                  </div>
+
+                  <div class="field">
+                    <label>Address</label>
+                    <span>{{ m.data.vendor?.address?.value || "—" }}</span>
+                  </div>
+
+                  <div class="field">
+                    <label>Phone</label>
+                    <span>{{ m.data.vendor?.phone?.value || "—" }}</span>
+                  </div>
+                </div>
+
+                <!-- RIGHT -->
+                <div class="column">
+                  <div class="section">Customer</div>
+
+                  <div class="field">
+                    <label>Name</label>
+                    <span>{{ m.data.customer?.name?.value || "—" }}</span>
+                  </div>
+
+                  <div class="field">
+                    <label>Phone</label>
+                    <span>{{ m.data.customer?.phone?.value || "—" }}</span>
+                  </div>
+
+                  <div class="section">Vehicle</div>
+
+                  <div class="field">
+                    <label>Year / Make / Model</label>
+                    <span>
+                      {{
+                        (m.data.vehicle?.year?.value || "") +
+                          " " +
+                          (m.data.vehicle?.make?.value || "") +
+                          " " +
+                          (m.data.vehicle?.model?.value || "")
+                      }}
+                    </span>
+                  </div>
+
+                  <div class="field">
+                    <label>VIN</label>
+                    <span>{{ m.data.vehicle?.vin?.value || "—" }}</span>
+                  </div>
+
+                  <div class="field">
+                    <label>Mileage</label>
+                    <span>{{ m.data.vehicle?.mileage?.value || "—" }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Line Items -->
+              <div *ngIf="m.data.line_items?.length" class="line-items">
+                <div class="section">Line Items</div>
+
+                <div class="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Description</th>
+                        <th class="center">Qty</th>
+                        <th class="right">Price</th>
+                        <th class="right">Total</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      <tr *ngFor="let li of m.data.line_items">
+                        <td>{{ li.description }}</td>
+                        <td class="center">{{ li.quantity }}</td>
+                        <td class="right">
+                          {{ formatCurrency(li.unit_price) }}
+                        </td>
+                        <td class="right strong">
+                          {{ formatCurrency(li.total) }}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- Totals -->
+                <div class="totals">
+                  <div>
+                    Subtotal:
+                    <strong>{{ formatCurrency(m.data.subtotal) }}</strong>
+                  </div>
+                  <div>
+                    Tax ({{ m.data.tax_rate || 0 }}%):
+                    <strong>{{ formatCurrency(m.data.tax_amount) }}</strong>
+                  </div>
+                  <div class="grand">
+                    Total:
+                    <strong>{{ formatCurrency(m.data.total) }}</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </ng-container>
+
+        <ng-container *ngIf="m.type === 'step' && m.data">
+          <div class="card step-card">
+            <div class="card-body">
+              <!-- HEADER -->
+              <div class="step-header">
+                <!-- STEP NUMBER -->
+                <div class="step-badge" [ngClass]="m.data.status">
+                  {{ m.data.step_number }}
+                </div>
+
+                <!-- STEP INFO -->
+                <div class="step-main">
+                  <div class="step-title">
+                    {{ m.data.step_name }}
+                  </div>
+                  <div class="step-summary">
+                    {{ m.data.summary }}
+                  </div>
+                </div>
+
+                <!-- TIME -->
+                <div class="step-time">
+                  {{ m.data.duration_seconds || 0 | number: "1.1-1" }}s
+                </div>
+              </div>
+
+              <!-- FLAGS -->
+              <div *ngIf="m.data.flags?.length" class="flags">
+                <div
+                  *ngFor="let f of m.data.flags"
+                  class="flag"
+                  [ngClass]="f.severity"
+                >
+                  <span class="flag-label">
+                    ⚑ {{ f.severity.toUpperCase() }}
+                  </span>
+                  <span class="flag-msg">
+                    {{ f.message }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- THOUGHT -->
+              <div class="thought-wrapper">
+                <button
+                  class="thought-toggle"
+                  (click)="
+                    toggleThought('thought-' + (m.data.step_number || ''))
+                  "
+                >
+                  💭 Thought Process
+                </button>
+
+                <div
+                  *ngIf="
+                    toggledThoughts['thought-' + (m.data.step_number || '')]
+                  "
+                  class="thought-content"
+                >
+                  {{ m.data.thought_process }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </ng-container>
+
+        <!-- Verdict / report -->
+        <ng-container *ngIf="m.type === 'verdict' && m.data">
+          <div class="card verdict-card">
+            <!-- HEADER -->
+            <div
+              class="verdict-header"
+              [ngClass]="getVerdictClass(m.data.verdict)"
+            >
+              <div class="verdict-title">🏙️ {{ m.data.verdict }}</div>
+
+              <div class="verdict-reason">
+                {{ m.data.verdict_reasoning }}
+              </div>
+            </div>
+
+            <!-- BODY -->
+            <div class="card-body">
+              <!-- STATS -->
+              <div class="stats">
+                <div class="stat">
+                  Total Flags
+                  <strong>{{ m.data.total_flags || 0 }}</strong>
+                </div>
+
+                <div class="stat">
+                  Critical
+                  <strong [class.danger]="(m.data.critical_flags || 0) > 0">
+                    {{ m.data.critical_flags || 0 }}
+                  </strong>
+                </div>
+
+                <button class="download-btn" (click)="downloadReport()">
+                  📄 Download Report
+                </button>
+              </div>
+
+              <!-- RECOMMENDATION -->
+              <div *ngIf="m.data.recommendation" class="recommendation">
+                💡 {{ m.data.recommendation }}
+              </div>
+            </div>
+          </div>
+        </ng-container>
+      </div>
+    </ng-container>
+
+    <ng-template #empty>
+      <div class="message bot p-3 bg-light rounded">
+        No messages yet. Upload a PDF or ask a question.
+      </div>
+    </ng-template>
+  </div>
+</div>
